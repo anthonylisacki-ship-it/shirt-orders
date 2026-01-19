@@ -4,28 +4,30 @@ const fs = require("fs-extra");
 const path = require("path");
 
 const app = express();
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static("."));
+
+// Serve static files (Render-safe)
+app.use(express.static(__dirname));
 
 const VENMO_USERNAME = "vastprinting";
 const PRICE_PER_PLAYER_LINE = 20;
 const PRICE_PER_BUSINESS_LINE = 200;
 const CSV_FILE = path.join(__dirname, "orders.csv");
 
-// Nodemailer setup
+// -------------------- EMAIL --------------------
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,
-  secure: false, // MUST be false for port 587
+  secure: false,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS
   }
 });
 
-
-// Ensure CSV file exists with headers
+// -------------------- CSV INIT --------------------
 if (!fs.existsSync(CSV_FILE)) {
   const headers = [
     "Timestamp",
@@ -43,29 +45,28 @@ if (!fs.existsSync(CSV_FILE)) {
   fs.writeFileSync(CSV_FILE, headers.join(",") + "\n");
 }
 
+// -------------------- SUBMIT --------------------
 app.post("/submit", async (req, res) => {
   try {
     const data = req.body;
 
-    if (!data.terms) return res.status(400).json({ error: "Terms not accepted" });
+    if (!data.terms) {
+      return res.status(400).json({ error: "Terms not accepted" });
+    }
 
-    // Parse numbers
     const playerLinesCount = parseInt(data.lineCount) || 0;
     const businessLinesCount =
       data.businessDesign === "yes" ? parseInt(data.businessLines) || 0 : 0;
 
-    // Calculate total
     const totalAmount =
       playerLinesCount * PRICE_PER_PLAYER_LINE +
       businessLinesCount * PRICE_PER_BUSINESS_LINE;
 
-    // Collect player lines
     const playerLines = [];
     for (let i = 1; i <= playerLinesCount; i++) {
       playerLines.push(data[`line${i}`] || "");
     }
 
-    // Collect business lines
     const businessLines = [];
     if (data.businessDesign === "yes") {
       for (let i = 1; i <= businessLinesCount; i++) {
@@ -75,13 +76,6 @@ app.post("/submit", async (req, res) => {
 
     const timestamp = new Date().toISOString();
 
-    // Prepare CSV row
-    const playerLineColumns = [];
-    for (let i = 0; i < 20; i++) playerLineColumns.push(playerLines[i] || "");
-
-    const businessLineColumns = [];
-    for (let i = 0; i < 10; i++) businessLineColumns.push(businessLines[i] || "");
-
     const csvRow = [
       timestamp,
       data.playerName,
@@ -89,97 +83,52 @@ app.post("/submit", async (req, res) => {
       data.email,
       data.shirtSize,
       playerLinesCount,
-      ...playerLineColumns,
+      ...Array.from({ length: 20 }, (_, i) => playerLines[i] || ""),
       data.businessDesign || "No",
       businessLinesCount,
-      ...businessLineColumns,
+      ...Array.from({ length: 10 }, (_, i) => businessLines[i] || ""),
       totalAmount
-    ]
-      .map(v => `"${v}"`)
-      .join(",") + "\n";
+    ].map(v => `"${v}"`).join(",") + "\n";
 
     await fs.appendFile(CSV_FILE, csvRow);
 
-    // Venmo link
     const note = encodeURIComponent(`Fundraiser - ${data.playerName}`);
     const venmoLink = `https://venmo.com/?txn=pay&recipients=${VENMO_USERNAME}&amount=${totalAmount}&note=${note}`;
 
-    // --- Admin email ---
-    let adminEmailText = `New Shirt Order:
-
-Date/Time: ${timestamp}
-Player Name: ${data.playerName}
-Team/Coach: ${data.teamName}
-Email: ${data.email}
-
-Shirt Size: ${data.shirtSize}
-Number of Player Lines: ${playerLinesCount}
-Player Line Names:
-${playerLines.map((name, idx) => `  ${idx + 1}. ${name}`).join("\n")}
-
-Business Design Purchased: ${data.businessDesign || "No"}
-Number of Business Lines: ${businessLinesCount}
-Business Line Names:
-${businessLines.map((name, idx) => `  ${idx + 1}. ${name}`).join("\n")}
-
-Total Amount: $${totalAmount}
-`;
-
+    // Admin email
     await transporter.sendMail({
-      from: "anthonylisacki@gmail.com",
-      to: "anthonylisacki@gmail.com",
+      from: process.env.EMAIL_USER,
+      to: process.env.EMAIL_USER,
       subject: "New Shirt Order",
-      text: adminEmailText
+      text: `Player: ${data.playerName}\nTotal: $${totalAmount}`
     });
 
-    // --- Customer confirmation email ---
-    let customerText = `Thank you for your order!
-
-Order Summary:
------------------------
-Player Name: ${data.playerName}
-Team/Coach: ${data.teamName}
-Email: ${data.email}
-Shirt Size: ${data.shirtSize}
-
-Number of Player Lines: ${playerLinesCount}
-Player Line Names:
-${playerLines.map((name, idx) => `  ${idx + 1}. ${name}`).join("\n")}
-
-Business Design Purchased: ${data.businessDesign || "No"}
-Number of Business Lines: ${businessLinesCount}
-Business Line Names:
-${businessLines.map((name, idx) => `  ${idx + 1}. ${name}`).join("\n")}
-
-Total Amount: $${totalAmount}
------------------------
-
-Pay here on Venmo: ${venmoLink}
-
-${
-  data.businessDesign === "yes"
-    ? "\nIf you purchased a business sponsor, please make sure to email the logo file to sales@vastprintingaz.com"
-    : ""
-}
-`;
-
+    // Customer email
     await transporter.sendMail({
-      from: "anthonylisacki@gmail.com",
+      from: process.env.EMAIL_USER,
       to: data.email,
       subject: "Your Shirt Order Confirmation",
-      text: customerText
+      text: `Thank you!\n\nTotal: $${totalAmount}\nPay here:\n${venmoLink}`
     });
 
-    res.json({ venmoLink, amount: totalAmount });
+    res.json({
+      amount: totalAmount,
+      venmoLink
+    });
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("SUBMIT ERROR:", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-// CSV download for admin
+// CSV download
 app.get("/admin/orders.csv", (req, res) => {
   res.download(CSV_FILE, "orders.csv");
 });
 
-app.listen(3000, () => console.log("Server running at http://localhost:3000"));
+// -------------------- PORT (RENDER FIX) --------------------
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
