@@ -15,12 +15,15 @@ const CSV_FILE = path.join(__dirname, "orders.csv");
 
 // Nodemailer setup
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false, // MUST be false for port 587
   auth: {
-    user: "anthonylisacki@gmail.com",
-    pass: "uayn rtrh ubdi zsik" // Use environment variable in production!
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
   }
 });
+
 
 // Ensure CSV file exists with headers
 if (!fs.existsSync(CSV_FILE)) {
