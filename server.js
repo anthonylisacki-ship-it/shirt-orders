@@ -14,7 +14,23 @@ app.use(express.static(__dirname));
 const VENMO_USERNAME = "dtanque";
 const PRICE_PER_PLAYER_LINE = 20;
 const PRICE_PER_BUSINESS_LINE = 200;
-const CSV_FILE = path.join(__dirname, "orders.csv");
+
+/* ======================================================
+   RENDER DISK SAFE CSV LOCATION (ONLY ADDITION)
+====================================================== */
+
+// If running on Render with a Disk, this path persists.
+// Locally, it falls back to ./data
+const DATA_DIR =
+  process.env.RENDER_DISK_PATH || path.join(__dirname, "data");
+
+// Ensure directory exists
+fs.ensureDirSync(DATA_DIR);
+
+// CSV now lives on disk-safe path
+const CSV_FILE = path.join(DATA_DIR, "orders.csv");
+
+/* ====================================================== */
 
 // -------------------- EMAIL --------------------
 const transporter = nodemailer.createTransport({
@@ -88,7 +104,9 @@ app.post("/submit", async (req, res) => {
       businessLinesCount,
       ...Array.from({ length: 10 }, (_, i) => businessLines[i] || ""),
       totalAmount
-    ].map(v => `"${v}"`).join(",") + "\n";
+    ]
+      .map(v => `"${v}"`)
+      .join(",") + "\n";
 
     await fs.appendFile(CSV_FILE, csvRow);
 
@@ -104,7 +122,7 @@ app.post("/submit", async (req, res) => {
       ? businessLines.map((name, idx) => `  ${idx + 1}. ${name}`).join("\n")
       : "  (none)";
 
-    // Admin email (FULL DETAILS)
+    // Admin email
     const adminEmailText = `New Shirt Order
 
 Date/Time: ${timestamp}
@@ -136,7 +154,7 @@ ${venmoLink}
       text: adminEmailText
     });
 
-    // Customer email (FULL DETAILS + PAYMENT LINK MESSAGE)
+    // Customer email
     const customerEmailText = `Thank you for your order!
 
 Order Summary
@@ -173,7 +191,6 @@ ${venmoLink}
       amount: totalAmount,
       venmoLink
     });
-
   } catch (err) {
     console.error("SUBMIT ERROR:", err);
     res.status(500).json({ error: "Server error" });
@@ -185,7 +202,7 @@ app.get("/admin/orders.csv", (req, res) => {
   res.download(CSV_FILE, "orders.csv");
 });
 
-// -------------------- PORT (RENDER FIX) --------------------
+// -------------------- PORT --------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
