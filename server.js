@@ -11,7 +11,7 @@ app.use(express.urlencoded({ extended: true }));
 // Serve static files (Render-safe)
 app.use(express.static(__dirname));
 
-const VENMO_USERNAME = "vastprinting";
+const VENMO_USERNAME = "dtanque";
 const PRICE_PER_PLAYER_LINE = 20;
 const PRICE_PER_BUSINESS_LINE = 200;
 const CSV_FILE = path.join(__dirname, "orders.csv");
@@ -95,20 +95,78 @@ app.post("/submit", async (req, res) => {
     const note = encodeURIComponent(`Fundraiser - ${data.playerName}`);
     const venmoLink = `https://venmo.com/?txn=pay&recipients=${VENMO_USERNAME}&amount=${totalAmount}&note=${note}`;
 
-    // Admin email
+    // Build detailed line lists
+    const playerLinesText = playerLinesCount
+      ? playerLines.map((name, idx) => `  ${idx + 1}. ${name}`).join("\n")
+      : "  (none)";
+
+    const businessLinesText = businessLinesCount
+      ? businessLines.map((name, idx) => `  ${idx + 1}. ${name}`).join("\n")
+      : "  (none)";
+
+    // Admin email (FULL DETAILS)
+    const adminEmailText = `New Shirt Order
+
+Date/Time: ${timestamp}
+
+Player Name: ${data.playerName}
+Team/Coach: ${data.teamName}
+Customer Email: ${data.email}
+Shirt Size: ${data.shirtSize}
+
+Supporter Lines Purchased: ${playerLinesCount}
+Supporter Names:
+${playerLinesText}
+
+Business Design Purchased: ${data.businessDesign || "No"}
+Business Lines Purchased: ${businessLinesCount}
+Business Names:
+${businessLinesText}
+
+Total Amount: $${totalAmount}
+
+If you did not process your Venmo payment at checkout, please click here to finish payment:
+${venmoLink}
+`;
+
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: process.env.EMAIL_USER,
       subject: "New Shirt Order",
-      text: `Player: ${data.playerName}\nTotal: $${totalAmount}`
+      text: adminEmailText
     });
 
-    // Customer email
+    // Customer email (FULL DETAILS + PAYMENT LINK MESSAGE)
+    const customerEmailText = `Thank you for your order!
+
+Order Summary
+-----------------------
+Player Name: ${data.playerName}
+Team/Coach: ${data.teamName}
+Email: ${data.email}
+Shirt Size: ${data.shirtSize}
+
+Supporter Lines Purchased: ${playerLinesCount}
+Supporter Names:
+${playerLinesText}
+
+Business Design Purchased: ${data.businessDesign || "No"}
+Business Lines Purchased: ${businessLinesCount}
+Business Names:
+${businessLinesText}
+
+Total Amount: $${totalAmount}
+-----------------------
+
+If you did not process your Venmo payment at checkout, please click here to finish payment:
+${venmoLink}
+`;
+
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: data.email,
       subject: "Your Shirt Order Confirmation",
-      text: `Thank you!\n\nTotal: $${totalAmount}\nPay here:\n${venmoLink}`
+      text: customerEmailText
     });
 
     res.json({
